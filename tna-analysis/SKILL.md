@@ -10,8 +10,8 @@ agent_created: true
 
 This skill provides a guided, statistically-validated Transition Network Analysis workflow.
 TNA models temporal processes as directed weighted networks where nodes are discrete states
-and edges represent transition probabilities. The skill enforces a mandatory four-layer
-validation framework and produces fully reproducible analysis outputs.
+and edges represent transition probabilities. The skill enforces mandatory statistical validation
+gates (reliability → pruning → group comparison) and produces fully reproducible analysis outputs.
 
 ## When to Use
 
@@ -47,7 +47,7 @@ Before any analysis, ask the user what they want from TNA. Present as a simple c
 1. **Overall transition patterns** — "What does the whole interaction process look like?"
 2. **Hub state identification** — "Which state is most central / acts as a bottleneck?"
 3. **Group comparison** — "Do Group A and Group B have different interaction patterns?"
-4. **Behavioral clustering** — "Are there distinct types of interaction sequences?"
+4. **Behavioral clustering** — "Are there distinct types of interaction sequences?" ⚠️ v1.2.3 的 `clustering()` 不可用，需外部包。
 5. **All of the above** — Full pipeline
 
 Skip this only if the user's initial message already specifies what they want.
@@ -77,9 +77,20 @@ If the user chooses A, guide them through installing R (do NOT silently auto-ins
 Rscript -e 'library(tna)' 2>&1
 ```
 
-If the package is missing: instruct the user to run `install.packages("tna")` in R. Do NOT run this command automatically—CRAN mirror selection is interactive.
+If the package is missing: install it. On Windows, use a personal library path to avoid permission errors:
 
-If `tna` installs but dependencies fail (common on Windows without Rtools), suggest installing the binary version: `install.packages("tna", type = "binary")`.
+```r
+install.packages("tna", repos = "https://cloud.r-project.org")
+```
+
+Or if the system library is not writable:
+```r
+my_lib <- "C:/Users/USERNAME/Documents/R/win-library/4.6"
+install.packages("tna", repos = "https://cloud.r-project.org", lib = my_lib)
+.libPaths(c(my_lib, .libPaths()))
+```
+
+✅ Using `repos = "https://cloud.r-project.org"` avoids the interactive CRAN mirror prompt.
 
 ### Step 1.3: Record Environment Info
 
@@ -111,7 +122,7 @@ Try loading in R with fallback encodings:
 
 ```r
 d <- tryCatch(read.csv("FILE_PATH", stringsAsFactors = FALSE), error = function(e) NULL)
-if (is.null(d) || any(grepl('[\\x{4e00}-\\x{9fff}]', names(d), perl = FALSE)))) {
+if (is.null(d) || any(grepl('[\\x{4e00}-\\x{9fff}]', names(d), perl = FALSE))) {
   d <- tryCatch(read.csv("FILE_PATH", fileEncoding = "UTF-8", stringsAsFactors = FALSE),
                 error = function(e) read.csv("FILE_PATH", fileEncoding = "GBK", stringsAsFactors = FALSE))
 }
@@ -290,13 +301,13 @@ cls <- cliques(pruned, min_prob = 0.05)
 
 Report dyads (bidirectional pairs) and triads (fully connected triplets).
 
-### 5.4: Sequence Clustering (if requested)
+### 5.5: Sequence Clustering (if requested)
 
 ⚠️ **`clustering()` is not available in tna v1.2.3.** Suggest external alternatives:
 - **TraMineR + cluster**: `seqdist()` for distance matrix → `hclust()` or `pam()`
 - **R package `ClusterR`**: k-means on sequence-derived features
 
-### 5.5: GATE 3 — Group Comparison with Permutation Test (if requested)
+### 5.6: Group Comparison with Permutation Test (if requested)
 
 **Option A — `group_tna()` (v1.2.3, recommended):**
 
@@ -357,13 +368,14 @@ Structure the report as plain-language findings, not R output dumps:
 ...
 
 ## 模型信息
-- 模型类型: TNA (标准)
+- 模型类型: TNA (行归一化概率)
 - 状态数: 7
 - 序列数: 48
 - 会话数: 112
 - 可靠性: Pearson r = 0.94
 - Bootstrap 剪枝: 25/42 边保留 (59.5%)
-- InStrength 稳定性: r = 0.82 (移除50%数据后)
+- ⚠️ 中心性稳定性: 未检验（tna v1.2.3 不提供 stability()）
+- 组间比较: p = 0.003（置换检验，1000次）
 ```
 
 ### sessionInfo()
