@@ -32,9 +32,12 @@ Invoke this skill when the user's intent involves any of:
 
 ```
 [User intent] → [Environment check] → [Data load & diagnose] → [Parameter negotiate]
-    → [Model build → Reliability gate → Prune gate → Centrality stability gate]
-    → [Optional: communities, cliques, clustering, group compare]
+    → [Model build → Reliability gate → Prune gate]
+    → [Optional: centrality, communities, cliques, group compare]
     → [Output package: scripts, plots, CSVs, report, sessionInfo]
+
+⚠️ **tna v1.2.3 note**: `stability()` and `clustering()` are not available in the current CRAN release.
+For centrality interpretation, note this limitation; for clustering, suggest external packages.
 ```
 
 ## Phase 0: Intent Clarification
@@ -177,23 +180,13 @@ Add: 「关键结论建议做敏感性分析——换一个阈值重新跑，看
 
 ### Step 3.2: Model Type
 
-Auto-calculate the CV (coefficient of variation) of sequence lengths:
+In tna v1.2.3, `tna()` auto-dispatches — no explicit `model` parameter needed. The function uses row-normalized transition probabilities by default.
 
+If the user needs a different model (frequency, co-occurrence, etc.), use `build_model()` directly:
 ```r
-seq_lengths <- sapply(prepared$sequence, function(x) sum(!is.na(x)))
-cv <- sd(seq_lengths) / mean(seq_lengths)
+model <- build_model(prepared, type = "relative")  # default (same as tna())
+# Alternatives: "frequency", "co-occurrence"
 ```
-
-Present recommendation:
-
-- CV < 0.5 → Standard TNA (default)
-- CV > 0.5 → Recommend FTNA or WTNA (sequences vary too much in length for probability normalization)
-
-Explain the choice in plain terms and confirm with user.
-
-### Step 3.3: Bootstrap Iterations
-
-Default: n = 1000. Explain: "Bootstrap 迭代次数越多，边的显著性检验越精确，但计算时间越长。1000 次对大多数数据够用。"
 
 ## Phase 4: Model Building with Mandatory Validation Gates
 
@@ -218,15 +211,16 @@ Report output statistics:
 ### Step 4.2: Build Model
 
 ```r
-model <- tna(prepared, model = "CONFIRMED_MODEL_TYPE")
+model <- tna(prepared)    # v1.2.3: no model parameter
 ```
 
-Report: number of nodes, number of edges (including zero-probability), initial probability distribution.
+Report: number of nodes, number of edges, transition probability matrix.
 
 ### Step 4.3: GATE 1 — Reliability Check (MANDATORY, NO EXCEPTIONS)
 
 ```r
 rel <- reliability(model, n = 1000)
+r_pearson <- rel$summary$mean[rel$summary$metric == "Pearson"]  # v1.2.3 output structure
 ```
 
 Present result clearly:
@@ -242,7 +236,7 @@ If FAIL, do NOT continue to downstream analysis. Present diagnostic recommendati
 ### Step 4.4: GATE 2 — Bootstrap Pruning (MANDATORY)
 
 ```r
-pruned <- prune(model, method = "bootstrap", n = 1000)
+pruned <- prune(model)    # v1.2.3: no method/n params; auto-selects pruning method
 ```
 
 Report:
@@ -256,7 +250,7 @@ If retention < 10%, warn: "数据中的信号很弱，网络接近随机。幸�
 
 ```r
 png("output/tna_network.png", width = 1200, height = 900, res = 150)
-plot(pruned, minimum = 0.05, cut = 0.1)
+plot(pruned, minimum = 0.05, edge_cutoff = 0.1)   # v1.2.3: 'cut' deprecated, use 'edge_cutoff'
 dev.off()
 ```
 
@@ -269,18 +263,15 @@ Execute only the analyses corresponding to the user's intent from Phase 0.
 ### 5.1: Centrality Analysis
 
 ```r
-cent <- centralities(pruned)
+cent <- centralities(pruned)    # v1.2.3: returns data.frame with 'state' column
+cent <- cent[order(-cent$InStrength), ]  # sort by InStrength
 ```
 
-Present as a ranked table. Highlight top InStrength (most popular target), top OutStrength (most frequent source), top Betweenness (bridge node).
+Present as a ranked table using `cent$state`, `cent$InStrength`, `cent$OutStrength`, `cent$Betweenness`, `cent$Closeness`. Highlight top InStrength (most popular target), top OutStrength (most frequent source), top Betweenness (bridge node).
 
-### 5.2: GATE 3 — Centrality Stability (MANDATORY if interpreting centralities)
+### 5.2: Centrality Stability
 
-```r
-stab <- stability(pruned, metric = "InStrength")
-```
-
-Standard: correlation must remain > 0.7 after dropping 50% of cases. Present result and stability assessment for each centrality metric used.
+⚠️ **`stability()` is not available in tna v1.2.3.** Include this caveat in the report: "中心性指标未经过案例剔除稳定性检验（tna v1.2.3 中 stability() 函数不可用）。"
 
 ### 5.3: Community Detection (if requested)
 
@@ -299,29 +290,40 @@ cls <- cliques(pruned, min_prob = 0.05)
 
 Report dyads (bidirectional pairs) and triads (fully connected triplets).
 
-### 5.5: Sequence Clustering (if requested)
+### 5.4: Sequence Clustering (if requested)
+
+⚠️ **`clustering()` is not available in tna v1.2.3.** Suggest external alternatives:
+- **TraMineR + cluster**: `seqdist()` for distance matrix → `hclust()` or `pam()`
+- **R package `ClusterR`**: k-means on sequence-derived features
+
+### 5.5: GATE 3 — Group Comparison with Permutation Test (if requested)
+
+**Option A — `group_tna()` (v1.2.3, recommended):**
 
 ```r
-clust <- clustering(prepared, method = "edit_distance", k = 3)
+gt <- group_tna(d, action = "Action", actor = "Actor", time = "Time",
+                group = "CONDITION_COL", time_threshold = CONFIRMED_THRESHOLD)
+p_a <- prune(gt$GROUP_A)
+p_b <- prune(gt$GROUP_B)
 ```
 
-Present cluster sizes, characteristic patterns per cluster, and covariate associations (from metadata).
+Plot side-by-side for descriptive comparison:
+```r
+png("output/group_comparison.png", width = 1800, height = 800, res = 150)
+par(mfrow = c(1, 2))
+plot(p_a, minimum = 0.05, edge_cutoff = 0.1, main = "Group A")
+plot(p_b, minimum = 0.05, edge_cutoff = 0.1, main = "Group B")
+par(mfrow = c(1, 1))
+dev.off()
+```
 
-### 5.6: GATE 4 — Group Comparison with Permutation Test (if requested)
+**Option B — `permutation_test()` (statistical comparison):**
 
 ```r
-# Build per-group models
-model_a <- tna(subset(prepared, CONDITION_COL == "GROUP_A"), model = "CONFIRMED_TYPE")
-model_b <- tna(subset(prepared, CONDITION_COL == "GROUP_B"), model = "CONFIRMED_TYPE")
-pruned_a <- prune(model_a, method = "bootstrap", n = 1000)
-pruned_b <- prune(model_b, method = "bootstrap", n = 1000)
-perm_test <- permutation_test(pruned_a, pruned_b, n_permutations = 1000)
+perm <- permutation_test(p_a, p_b, n_permutations = 1000)
 ```
 
-Report:
-- Overall network difference (p-value, effect size)
-- Significantly different edges (with p-values and direction)
-- Significantly different centrality values
+⚠️ **Memory warning**: 80+ sequences with 1000 permutations may need >10GB. For large datasets, reduce `n_permutations` to 100.
 
 ## Phase 6: Output Packaging
 
@@ -333,10 +335,8 @@ output/
 ├── transition_matrix.csv    # Row-normalized probability matrix
 ├── centrality_table.csv     # All centrality measures for all nodes
 ├── tna_network.png          # Network plot (pruned)
-├── reliability.png          # Split-half reliability plot
-├── stability.png            # Case-dropping stability plot
+├── group_comparison.png     # Side-by-side group networks (if run)
 ├── communities.png          # Community detection plot (if run)
-├── sequences.png            # Sequence index plot
 ├── analysis_report.md       # Human-readable findings report
 └── session_info.txt         # R sessionInfo() output
 ```
@@ -408,10 +408,10 @@ Before delivering final results, verify:
 
 - [ ] Reliability gate passed (r > 0.8)
 - [ ] Edges pruned via bootstrap (report retention ratio)
-- [ ] Centrality stability checked (r > 0.7 at 50% data removal)
-- [ ] Group comparison used permutation test (not visual comparison)
+- [ ] Group comparison used permutation test (not visual comparison); if OOM, use descriptive side-by-side with caveat
 - [ ] All plots saved as files (not just displayed)
 - [ ] Reproducible .R script saved with actual parameter values
-- [ ] sessionInfo() captured
+- [ ] `sessionInfo()` captured (include R + tna versions)
 - [ ] Findings written in plain language with statistical evidence
-- [ ] BibTeX citation included in report: Saqr et al. (2025), LAK '25, DOI: 10.1145/3706468.3706513
+- [ ] ⚠️ tna v1.2.3 limitations noted: no `stability()`, no `clustering()`; `edge_cutoff` replaces `cut` in plot()
+- [ ] BibTeX citation included in report: Tikka, S., Lopez-Pernas, S., & Saqr, M. (2025). tna: An R Package for Transition Network Analysis. Applied Psychological Measurement. DOI: 10.1177/01466216251348840
